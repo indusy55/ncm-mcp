@@ -13,6 +13,7 @@ import {
   loadSecurityConfig,
   sanitizeMethodParams,
 } from './security.js';
+import { getServerSessionSnapshot } from './server-session.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -35,6 +36,7 @@ function buildMethodResource(
 
 export function createNcmMcpServer(context: NcmApiContext): McpServer {
   const security = loadSecurityConfig();
+  const session = getServerSessionSnapshot();
   const server = new McpServer(
     {
       name: 'ncm-mcp',
@@ -133,120 +135,107 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
     },
   );
 
-  server.registerTool(
-    'ncm_call',
-    {
-      description:
-        'Call one @neteasecloudmusicapienhanced/api method. All fields except method are forwarded as params.',
-      inputSchema: z.object({
-        method: z.string().trim().min(1),
-      }).passthrough(),
-    },
-    async (input) => {
-      if (!isToolAllowed(security, 'ncm_call')) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text: 'ncm_call is disabled by server policy.',
+  if (isToolAllowed(security, 'ncm_call')) {
+    server.registerTool(
+      'ncm_call',
+      {
+        description:
+          'Call one @neteasecloudmusicapienhanced/api method. All fields except method are forwarded as params.',
+        inputSchema: z.object({
+          method: z.string().trim().min(1),
+        }).passthrough(),
+      },
+      async (input) => {
+        const { method, ...params } = input as { method: string } & UnknownRecord;
+        if (!isMethodAllowed(security, method)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `Method is disabled by server policy: ${method}`,
+              },
+            ],
+            structuredContent: {
+              method,
+              policyDenied: true,
             },
-          ],
-          structuredContent: {
-            policyDenied: true,
-          },
-        };
-      }
+          };
+        }
 
-      const { method, ...params } = input as { method: string } & UnknownRecord;
-      if (!isMethodAllowed(security, method)) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text: `Method is disabled by server policy: ${method}`,
+        const sanitized = sanitizeMethodParams(security, params);
+        if (!sanitized.ok) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: sanitized.message,
+              },
+            ],
+            structuredContent: {
+              method,
+              policyDenied: true,
             },
-          ],
-          structuredContent: {
-            method,
-            policyDenied: true,
-          },
-        };
-      }
+          };
+        }
 
-      const sanitized = sanitizeMethodParams(security, params);
-      if (!sanitized.ok) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text: sanitized.message,
+        const fn = context.api[method];
+
+        if (!fn) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `Unknown method: ${method}`,
+              },
+            ],
+            structuredContent: {
+              method,
+              available: false,
             },
-          ],
-          structuredContent: {
-            method,
-            policyDenied: true,
-          },
-        };
-      }
+          };
+        }
 
-      const fn = context.api[method];
+        try {
+          const result = await fn(params);
 
-      if (!fn) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text: `Unknown method: ${method}`,
+          return {
+            content: [
+              {
+                type: 'text',
+                text: toPrettyJson(result),
+              },
+            ],
+            structuredContent: {
+              method,
+              params,
+              data: normalizeKnownMethodResult(method, result, params),
+              result: result as UnknownRecord,
             },
-          ],
-          structuredContent: {
-            method,
-            available: false,
-          },
-        };
-      }
+          };
+        } catch (error) {
+          const normalized = normalizeToolError(error);
 
-      try {
-        const result = await fn(params);
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: toPrettyJson(result),
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: normalized.message,
+              },
+            ],
+            structuredContent: {
+              method,
+              params,
+              error: normalized,
             },
-          ],
-          structuredContent: {
-            method,
-            params,
-            data: normalizeKnownMethodResult(method, result, params),
-            result: result as UnknownRecord,
-          },
-        };
-      } catch (error) {
-        const normalized = normalizeToolError(error);
-
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text: normalized.message,
-            },
-          ],
-          structuredContent: {
-            method,
-            params,
-            error: normalized,
-          },
-        };
-      }
-    },
-  );
+          };
+        }
+      },
+    );
+  }
 
   server.registerResource(
     'ncm-methods',
@@ -281,10 +270,17 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
           uri: 'ncm://security',
           mimeType: 'application/json',
           text: toPrettyJson({
-            toolMode: security.toolMode,
+            enableLoginBootstrap: security.enableLoginBootstrap,
+            allowAuthenticatedReads: security.allowAuthenticatedReads,
+            allowWriteTools: security.allowWriteTools,
             allowCookieAuth: security.allowCookieAuth,
             allowNetworkOverrides: security.allowNetworkOverrides,
             enableNcmCall: security.enableNcmCall,
+            serverSession: session,
+            allowedTools:
+              security.allowedTools === null
+                ? null
+                : Array.from(security.allowedTools),
           }),
         },
       ],
@@ -305,15 +301,33 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
           text: [
             '# Login Guide',
             '',
-            `Current tool mode: ${security.toolMode}`,
+            `Server session active: ${session.active}`,
+            `Authenticated reads enabled: ${security.allowAuthenticatedReads}`,
+            `Write tools enabled: ${security.allowWriteTools}`,
             '',
-            'Recommended flow:',
-            '1. Use `ncm_login_qr_start` to get QR login data.',
-            '2. Poll with `ncm_login_qr_check` until login succeeds.',
-            '3. Keep auth server-side where possible.',
+            ...(security.enableLoginBootstrap && !session.active
+              ? [
+                  'Recommended flow:',
+                  '1. Use `ncm_login_qr_start` to get QR login data.',
+                  '2. Poll with `ncm_login_qr_check` until login succeeds.',
+                  '3. After login succeeds, the session stays on the server and login tools are hidden.',
+                ]
+              : session.active
+                ? [
+                    'A server-side session is already active.',
+                    'Clients cannot read or pass the login cookie.',
+                  ]
+              : [
+                  'Login bootstrap tools are not exposed in the current mode.',
+                  'Set `NCM_ENABLE_LOGIN_BOOTSTRAP=true` to enable QR login bootstrap.',
+                ]),
             '',
-            'Per-request cookie passthrough is disabled by default.',
-            'Network override params such as proxy and realIP are also disabled by default.',
+            security.allowCookieAuth
+              ? 'Per-request cookie passthrough is enabled.'
+              : 'Per-request cookie passthrough is disabled by default.',
+            security.allowNetworkOverrides
+              ? 'Network override params are enabled.'
+              : 'Network override params such as proxy and realIP are disabled by default.',
           ].join('\n'),
         },
       ],
@@ -330,8 +344,8 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
       const name = variables.name;
       const method = typeof name === 'string' ? context.methodsByName.get(name) : undefined;
 
-      if (!method) {
-        throw new Error(`Unknown method: ${String(name)}`);
+      if (!method || !isMethodAllowed(security, method.name)) {
+        throw new Error(`Unknown or disabled method: ${String(name)}`);
       }
 
       const resource = buildMethodResource(method);

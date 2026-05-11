@@ -1,4 +1,3 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import type { NcmApiContext } from '../ncm-api.js';
@@ -25,6 +24,7 @@ import {
   normalizePlaylistListResult,
 } from './normalizers.js';
 import { asArray, callMethod, getBody } from './shared.js';
+import type { ToolRegistrar } from './registrar.js';
 import {
   idSchema,
   paginationSchema,
@@ -32,7 +32,7 @@ import {
 } from './tool-helpers.js';
 
 export function registerMusicTools(
-  server: McpServer,
+  server: ToolRegistrar,
   context: NcmApiContext,
   security: SecurityConfig,
 ): void {

@@ -21,33 +21,59 @@ pnpm verify:mcp
 
 - `HOST`：默认 `127.0.0.1`
 - `PORT`：默认 `3000`
-- `NCM_TOOL_MODE`：`readonly` / `authenticated` / `full`，默认 `readonly`
-- `NCM_ENABLE_NCM_CALL`：是否启用 `ncm_call`，默认 `true`
+- `NETEASE_COOKIE`：可选，服务启动时直接注入服务端登录态
+- `NCM_ENABLE_LOGIN_BOOTSTRAP`：是否暴露二维码登录引导 tools，默认 `false`
+- `NCM_ALLOW_AUTH_READS`：是否暴露“需要登录但不写入”的 tools，默认 `false`
+- `NCM_ALLOW_WRITE_TOOLS`：是否暴露写操作 tools，默认 `false`
+- `NCM_ENABLE_NCM_CALL`：是否启用 `ncm_call`，默认 `false`
 - `NCM_ALLOW_COOKIE_AUTH`：是否允许每次请求透传 `cookie`，默认 `false`
 - `NCM_ALLOW_NETWORK_OVERRIDES`：是否允许 `proxy` / `realIP` / `randomCNIP`，默认 `false`
+- `NCM_ALLOWED_TOOLS`：可选，逗号分隔的 tool 白名单；配置后只注册名单内的 tool
 
 ## 安全默认值
 
 默认配置就是面向公共服务的保守模式：
 
-- 默认只开放只读工具
-- 默认禁用登录、写操作类工具
+- 默认开放公开只读工具
+- 默认不暴露二维码登录引导 tools
+- 默认不暴露需要登录的只读 tools
+- 默认不暴露写操作 tools
+- 默认不暴露 `ncm_call`
 - 默认不允许透传 `cookie`
 - 默认不允许透传 `proxy`、`realIP`、`randomCNIP`
 
-如果要开放登录但仍禁写，设置：
+如果要开放二维码登录引导，但仍然不开放登录后的私有只读能力和写能力，设置：
 
 ```bash
-NCM_TOOL_MODE=authenticated
+NCM_ENABLE_LOGIN_BOOTSTRAP=true
 ```
+
+如果要开放“需要登录的只读能力”，设置：
+
+```bash
+NCM_ALLOW_AUTH_READS=true
+```
+
+如果服务端已经有登录态，`NCM_ALLOW_AUTH_READS=true` 后会自动使用服务端会话，客户端不需要也拿不到 cookie。
 
 如果要开放写操作，再设置：
 
 ```bash
-NCM_TOOL_MODE=full
+NCM_ALLOW_WRITE_TOOLS=true
 ```
 
-## 暴露的 MCP tools
+## MCP tools 暴露规则
+
+服务启动时会按安全策略决定是否注册 tool：
+
+- 始终注册公开只读工具
+- `NCM_ENABLE_LOGIN_BOOTSTRAP=true` 且当前没有服务端会话：额外注册二维码登录引导 tools
+- `NCM_ALLOW_AUTH_READS=true` 且当前有服务端会话：额外注册需要登录的只读 tools
+- `NCM_ALLOW_WRITE_TOOLS=true` 且当前有服务端会话：额外注册写操作 tools
+- `NCM_ENABLE_NCM_CALL=true`：额外注册 `ncm_call`
+- `NCM_ALLOWED_TOOLS`：如果设置，只保留白名单中的 tool
+
+下面是项目内已经实现的 tools，实际对外暴露以当前策略为准：
 
 - `ncm_search`：搜索歌曲、专辑、歌手、歌单、歌词、MV、视频等
 - `ncm_song_detail`：获取歌曲详情
@@ -83,18 +109,8 @@ NCM_TOOL_MODE=full
 - `ncm_toplist_detail`：获取榜单详情
 - `ncm_recommended_playlists`：获取推荐歌单
 - `ncm_recommended_songs`：获取每日推荐歌曲
-- `ncm_login_qr_key`：生成二维码登录 key
-- `ncm_login_qr_create`：生成二维码登录内容
 - `ncm_login_qr_check`：查询二维码登录状态
 - `ncm_login_qr_start`：一步拿到二维码登录 key 和二维码内容
-- `ncm_login_email`：邮箱登录
-- `ncm_login_cellphone`：手机号登录
-- `ncm_captcha_send`：发送手机验证码
-- `ncm_captcha_verify`：校验手机验证码
-- `ncm_cellphone_existence_check`：检查手机号是否存在
-- `ncm_login_status`：获取当前登录状态
-- `ncm_login_refresh`：刷新登录状态
-- `ncm_logout`：退出当前登录
 - `ncm_user_account`：获取当前账户信息
 - `ncm_user_detail`：获取指定用户详情
 - `ncm_user_subcount`：获取当前账户收藏统计
@@ -154,7 +170,7 @@ NCM_TOOL_MODE=full
 }
 ```
 
-如果目标方法需要 `cookie`、`proxy`、`realIP`、`randomCNIP` 等参数，直接放在同一层即可。
+如果要透传 `cookie`、`proxy`、`realIP`、`randomCNIP`，需要先在服务端显式打开对应环境变量；默认会被拒绝。公共服务更适合使用服务端会话，不要让客户端传 cookie。
 
 ## 返回结构
 
@@ -184,8 +200,9 @@ NCM_TOOL_MODE=full
 1. 读取 `ncm://login-guide`
 2. 调用 `ncm_login_qr_start`
 3. 轮询 `ncm_login_qr_check`
+4. 登录成功后，cookie 只保存在服务端；登录引导 tools 会自动隐藏
 
-如果是受信任的私有部署，再按需启用邮箱登录、手机号登录、`cookie` 透传。
+如果服务启动时已经配置了 `NETEASE_COOKIE`，则不需要暴露登录引导 tools。
 
 ## 验证说明
 
@@ -200,7 +217,7 @@ NCM_TOOL_MODE=full
 
 ## 暴露的 MCP resources
 
-- `ncm://methods`：全部方法列表
+- `ncm://methods`：当前策略允许的方法列表
 - `ncm://methods/{name}`：单个方法信息
 - `ncm://security`：当前安全策略
 - `ncm://login-guide`：登录使用说明

@@ -4,7 +4,9 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 
 import { createNcmMcpServer } from './mcp-server.js';
 import { loadNcmApiContext } from './ncm-api.js';
-import { loadSecurityConfig } from './security.js';
+import { isMethodAllowed, listAllowedTools, loadSecurityConfig } from './security.js';
+import { getServerSessionSnapshot } from './server-session.js';
+import { FEATURED_TOOLS } from './tool-catalog.js';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -17,79 +19,27 @@ async function main(): Promise<void> {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/', (_req, res) => {
+    const availableMethods = context.methods.filter((method) =>
+      isMethodAllowed(security, method.name),
+    ).length;
+    const serverSession = getServerSessionSnapshot();
+
     res.json({
       name: 'ncm-mcp',
       transport: 'streamable-http',
       endpoint: '/mcp',
-      toolMode: security.toolMode,
+      enableLoginBootstrap: security.enableLoginBootstrap,
+      allowAuthenticatedReads: security.allowAuthenticatedReads,
+      allowWriteTools: security.allowWriteTools,
       allowCookieAuth: security.allowCookieAuth,
       allowNetworkOverrides: security.allowNetworkOverrides,
+      enableNcmCall: security.enableNcmCall,
+      serverSession,
       loginGuide: 'ncm://login-guide',
       securityInfo: 'ncm://security',
-      methods: context.methods.length,
-      featuredTools: [
-        'ncm_search',
-        'ncm_song_detail',
-        'ncm_song_url',
-        'ncm_lyric',
-        'ncm_like_song',
-        'ncm_liked_songs',
-        'ncm_playlist_detail',
-        'ncm_playlist_create',
-        'ncm_playlist_delete',
-        'ncm_playlist_name_update',
-        'ncm_playlist_desc_update',
-        'ncm_playlist_order_update',
-        'ncm_playlist_subscribe',
-        'ncm_playlist_tracks',
-        'ncm_playlist_track_add',
-        'ncm_playlist_track_delete',
-        'ncm_playlist_categories',
-        'ncm_top_playlist',
-        'ncm_top_playlist_highquality',
-        'ncm_album_detail',
-        'ncm_artist_detail',
-        'ncm_artist_songs',
-        'ncm_artist_albums',
-        'ncm_top_song',
-        'ncm_mv_detail',
-        'ncm_mv_url',
-        'ncm_related_videos',
-        'ncm_similar_songs',
-        'ncm_similar_playlists',
-        'ncm_similar_artists',
-        'ncm_toplist',
-        'ncm_toplist_detail',
-        'ncm_recommended_playlists',
-        'ncm_recommended_songs',
-        'ncm_login_qr_key',
-        'ncm_login_qr_create',
-        'ncm_login_qr_check',
-        'ncm_login_qr_start',
-        'ncm_login_email',
-        'ncm_login_cellphone',
-        'ncm_captcha_send',
-        'ncm_captcha_verify',
-        'ncm_cellphone_existence_check',
-        'ncm_login_status',
-        'ncm_login_refresh',
-        'ncm_logout',
-        'ncm_user_account',
-        'ncm_user_detail',
-        'ncm_user_subcount',
-        'ncm_user_playlists',
-        'ncm_user_follows',
-        'ncm_user_followeds',
-        'ncm_user_record',
-        'ncm_comment_music',
-        'ncm_comment_playlist',
-        'ncm_comment_album',
-        'ncm_comment_mv',
-        'ncm_comment_video',
-        'ncm_list_methods',
-        'ncm_describe_method',
-        'ncm_call',
-      ],
+      availableMethods,
+      totalMethods: context.methods.length,
+      featuredTools: listAllowedTools(security, [...FEATURED_TOOLS]),
     });
   });
 

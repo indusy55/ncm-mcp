@@ -34,7 +34,10 @@ async function waitForServer(url: string, attempts = 30): Promise<void> {
   throw new Error(`Server did not become ready: ${url}`);
 }
 
-async function main(): Promise<void> {
+async function runScenario(
+  name: string,
+  extraEnv: Record<string, string>,
+): Promise<void> {
   const server = spawn(
     process.execPath,
     ['dist/index.js'],
@@ -44,6 +47,7 @@ async function main(): Promise<void> {
         ...process.env,
         HOST: host,
         PORT: String(port),
+        ...extraEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -96,14 +100,65 @@ async function main(): Promise<void> {
     console.log(
       JSON.stringify(
         {
+          scenario: name,
           step: 'tools/list',
           count: tools.tools.length,
           sample: tools.tools.slice(0, 12).map((tool) => tool.name),
+          hasLoginTool: tools.tools.some((tool) => tool.name === 'ncm_login_qr_start'),
+          hasAuthReadTool: tools.tools.some((tool) => tool.name === 'ncm_liked_songs'),
+          hasWriteTool: tools.tools.some((tool) => tool.name === 'ncm_playlist_create'),
+          hasNcmCall: tools.tools.some((tool) => tool.name === 'ncm_call'),
         },
         null,
         2,
       ),
     );
+
+    if (name === 'readonly-default') {
+      if (tools.tools.some((tool) => tool.name === 'ncm_login_qr_start')) {
+        throw new Error('readonly mode should not expose login tools');
+      }
+
+      if (tools.tools.some((tool) => tool.name === 'ncm_liked_songs')) {
+        throw new Error('readonly mode should not expose authenticated read tools');
+      }
+
+      if (tools.tools.some((tool) => tool.name === 'ncm_playlist_create')) {
+        throw new Error('readonly mode should not expose write tools');
+      }
+
+      if (tools.tools.some((tool) => tool.name === 'ncm_call')) {
+        throw new Error('readonly mode should not expose ncm_call by default');
+      }
+    }
+
+    if (name === 'login-bootstrap') {
+      if (!tools.tools.some((tool) => tool.name === 'ncm_login_qr_start')) {
+        throw new Error('login-bootstrap mode should expose login tools');
+      }
+
+      if (tools.tools.some((tool) => tool.name === 'ncm_liked_songs')) {
+        throw new Error('login-bootstrap mode should not expose authenticated read tools');
+      }
+
+      if (tools.tools.some((tool) => tool.name === 'ncm_playlist_create')) {
+        throw new Error('login-bootstrap mode should not expose write tools');
+      }
+    }
+
+    if (name === 'server-session-readonly') {
+      if (tools.tools.some((tool) => tool.name === 'ncm_login_qr_start')) {
+        throw new Error('server-session mode should hide login tools');
+      }
+
+      if (!tools.tools.some((tool) => tool.name === 'ncm_liked_songs')) {
+        throw new Error('server-session mode should expose authenticated read tools');
+      }
+
+      if (tools.tools.some((tool) => tool.name === 'ncm_playlist_create')) {
+        throw new Error('server-session mode should not expose write tools');
+      }
+    }
 
     const searchResult = await client.request(
       {
@@ -124,6 +179,7 @@ async function main(): Promise<void> {
     console.log(
       JSON.stringify(
         {
+          scenario: name,
           step: 'tools/call',
           tool: 'ncm_search',
           isError: searchResult.isError ?? false,
@@ -144,6 +200,27 @@ async function main(): Promise<void> {
     await cleanup();
     throw error;
   }
+}
+
+async function main(): Promise<void> {
+  await runScenario('readonly-default', {
+    NCM_ENABLE_NCM_CALL: 'false',
+  });
+
+  await runScenario('login-bootstrap', {
+    NCM_ENABLE_LOGIN_BOOTSTRAP: 'true',
+    NCM_ALLOW_AUTH_READS: 'false',
+    NCM_ALLOW_WRITE_TOOLS: 'false',
+    NCM_ENABLE_NCM_CALL: 'false',
+  });
+
+  await runScenario('server-session-readonly', {
+    NETEASE_COOKIE: 'MUSIC_U=test-cookie; __csrf=test-csrf',
+    NCM_ENABLE_LOGIN_BOOTSTRAP: 'true',
+    NCM_ALLOW_AUTH_READS: 'true',
+    NCM_ALLOW_WRITE_TOOLS: 'false',
+    NCM_ENABLE_NCM_CALL: 'false',
+  });
 }
 
 main().catch((error) => {

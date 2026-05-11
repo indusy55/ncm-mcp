@@ -1,7 +1,12 @@
 import type { NcmApiContext } from '../ncm-api.js';
 import { normalizeToolError } from '../ncm-api.js';
 import type { SecurityConfig } from '../security.js';
-import { isMethodAllowed, sanitizeMethodParams } from '../security.js';
+import {
+  isMethodAllowed,
+  sanitizeMethodParams,
+  shouldUseServerSession,
+} from '../security.js';
+import { getServerSessionCookie } from '../server-session.js';
 
 export type UnknownRecord = Record<string, unknown>;
 
@@ -67,6 +72,25 @@ export function pick<T extends string>(
   return target;
 }
 
+function buildMethodParams(
+  method: string,
+  params: UnknownRecord,
+): UnknownRecord {
+  if (params.cookie !== undefined || !shouldUseServerSession(method)) {
+    return params;
+  }
+
+  const cookie = getServerSessionCookie();
+  if (!cookie) {
+    return params;
+  }
+
+  return {
+    ...params,
+    cookie,
+  };
+}
+
 export async function callMethod(
   context: NcmApiContext,
   security: SecurityConfig,
@@ -126,7 +150,8 @@ export async function callMethod(
   }
 
   try {
-    const result = await fn(params);
+    const methodParams = buildMethodParams(method, params);
+    const result = await fn(methodParams);
 
     return {
       content: [
@@ -138,7 +163,7 @@ export async function callMethod(
       structuredContent: {
         method,
         params,
-        data: normalizeResult?.(result, params),
+        data: normalizeResult?.(result, methodParams),
         result: result as UnknownRecord,
       },
     };
