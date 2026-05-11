@@ -165,12 +165,14 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
 
         const sanitized = sanitizeMethodParams(security, params);
         if (!sanitized.ok) {
+          const { message } = sanitized;
+
           return {
             isError: true,
             content: [
               {
                 type: 'text',
-                text: sanitized.message,
+                text: message,
               },
             ],
             structuredContent: {
