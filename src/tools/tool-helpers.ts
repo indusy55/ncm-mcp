@@ -1,10 +1,6 @@
 import { z } from 'zod';
 
 export const requestBaseSchema = {
-  cookie: z.string().optional(),
-  proxy: z.string().optional(),
-  realIP: z.string().optional(),
-  randomCNIP: z.boolean().optional(),
 };
 
 export const idSchema = z.union([z.string(), z.number()]);

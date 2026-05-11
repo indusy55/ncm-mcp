@@ -7,6 +7,7 @@ import {
   getServerSessionSnapshot,
   setServerSessionCookie,
 } from './server-session.js';
+import { redactSensitiveValue } from './tools/shared.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -412,7 +413,7 @@ export function registerLoginHttpRoutes(
         message: typeof body.message === 'string' ? body.message : undefined,
         authorized: code === 803,
         session: getServerSessionSnapshot(),
-        result,
+        result: redactSensitiveValue(result),
       });
     } catch (error) {
       const normalized = normalizeToolError(error);

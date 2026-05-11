@@ -3,7 +3,13 @@ import { z } from 'zod';
 import type { NcmApiContext } from '../ncm-api.js';
 import type { SecurityConfig } from '../security.js';
 import type { ToolRegistrar } from './registrar.js';
-import { asRecord, callMethod, getBody, toPrettyJson } from './shared.js';
+import {
+  asRecord,
+  callMethod,
+  getBody,
+  redactSensitiveValue,
+  toPrettyJson,
+} from './shared.js';
 import { setServerSessionCookie } from '../server-session.js';
 import { idSchema } from './tool-helpers.js';
 
@@ -57,7 +63,7 @@ export function registerAuthTools(
               authorized: true,
               sessionStored: true,
             },
-            result: result.structuredContent?.result,
+            result: redactSensitiveValue(result.structuredContent?.result),
           },
         };
       }
@@ -112,7 +118,7 @@ export function registerAuthTools(
         structuredContent: {
           method: 'login_qr_start',
           data,
-          result: qrResult.structuredContent?.result,
+          result: redactSensitiveValue(qrResult.structuredContent?.result),
         },
       };
     },

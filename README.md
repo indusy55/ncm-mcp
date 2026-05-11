@@ -39,6 +39,7 @@ pnpm verify:mcp
 - 默认会在没有服务端登录态时，在服务端终端打印二维码
 - 登录成功后自动开放需要登录的只读工具
 - 默认不暴露写操作 tools
+- 默认忽略客户端旧版透传字段（`cookie`、`proxy`、`realIP`、`randomCNIP`）
 
 如果希望服务端扫码登录后在进程重启后仍然保留登录态，建议同时设置：
 
@@ -165,7 +166,7 @@ NCM_ALLOW_WRITE_TOOLS=true
 }
 ```
 
-不支持客户端透传 `cookie`、`proxy`、`realIP`、`randomCNIP`。公共服务应只使用服务端会话。
+不支持客户端透传 `cookie`、`proxy`、`realIP`、`randomCNIP`。这些旧字段不会生效，也不会再出现在 tool 的输入 schema 里。公共服务应只使用服务端会话。
 
 ## 返回结构
 
@@ -174,6 +175,8 @@ NCM_ALLOW_WRITE_TOOLS=true
 - `content[0].text`：原始返回的 JSON 文本
 - `structuredContent.result`：原始返回对象
 - `structuredContent.data`：为常用字段整理过的结果，适合客户端直接消费
+
+返回里的敏感字段（例如 `cookie`、`set-cookie`、`authorization`）会自动脱敏，不会原样返回给客户端。
 
 ## 代码组织
 
@@ -194,6 +197,7 @@ NCM_ALLOW_WRITE_TOOLS=true
 2. 否则直接扫描服务端终端打印的二维码
 3. 登录成功后，cookie 只保存在服务端；登录引导 tools 会自动隐藏
 4. 登录成功后，需要登录的只读 tools 会自动出现
+5. 如果终端二维码连续 5 次、每次 1 分钟都没人扫码，终端引导会自动停止
 
 如果是部署在远程服务器上，也可以直接打开 `/login` 页面扫码。这个页面会：
 

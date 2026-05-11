@@ -24,13 +24,6 @@ export type ResultNormalizer = (
   params: UnknownRecord,
 ) => UnknownRecord | undefined;
 
-export const requestBaseSchema = {
-  cookie: undefined,
-  proxy: undefined,
-  realIP: undefined,
-  randomCNIP: undefined,
-};
-
 export function toPrettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
@@ -45,6 +38,40 @@ export function asRecord(value: unknown): UnknownRecord | undefined {
 
 export function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+const SENSITIVE_FIELD_NAMES = new Set([
+  'cookie',
+  'cookies',
+  'set-cookie',
+  'setCookie',
+  'authorization',
+  'proxy',
+]);
+
+function isSensitiveField(key: string): boolean {
+  return SENSITIVE_FIELD_NAMES.has(key) || key.toLowerCase().includes('cookie');
+}
+
+export function redactSensitiveValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveValue(item));
+  }
+
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const redacted: Record<string, unknown> = {};
+
+  for (const [key, entry] of Object.entries(record)) {
+    redacted[key] = isSensitiveField(key)
+      ? '[REDACTED]'
+      : redactSensitiveValue(entry);
+  }
+
+  return redacted;
 }
 
 export function getBody(result: unknown): UnknownRecord {
@@ -165,14 +192,14 @@ export async function callMethod(
       content: [
         {
           type: 'text',
-          text: toPrettyJson(result),
+          text: toPrettyJson(redactSensitiveValue(result)),
         },
       ],
       structuredContent: {
         method,
         params,
         data: normalizeResult?.(result, methodParams),
-        result: result as UnknownRecord,
+        result: redactSensitiveValue(result) as UnknownRecord,
       },
     };
   } catch (error) {

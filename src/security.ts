@@ -90,17 +90,6 @@ export function sanitizeMethodParams(
   _config: SecurityConfig,
   params: Record<string, unknown>,
 ): { ok: true } | { ok: false; message: string } {
-  if (
-    params.proxy !== undefined ||
-    params.realIP !== undefined ||
-    params.randomCNIP !== undefined
-  ) {
-    return {
-      ok: false,
-      message: 'proxy/realIP/randomCNIP are disabled.',
-    };
-  }
-
   return { ok: true };
 }
 
