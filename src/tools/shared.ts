@@ -76,17 +76,25 @@ function buildMethodParams(
   method: string,
   params: UnknownRecord,
 ): UnknownRecord {
-  if (params.cookie !== undefined || !shouldUseServerSession(method)) {
-    return params;
+  const {
+    cookie: _cookie,
+    proxy: _proxy,
+    realIP: _realIP,
+    randomCNIP: _randomCNIP,
+    ...sanitizedParams
+  } = params;
+
+  if (!shouldUseServerSession(method)) {
+    return sanitizedParams;
   }
 
   const cookie = getServerSessionCookie();
   if (!cookie) {
-    return params;
+    return sanitizedParams;
   }
 
   return {
-    ...params,
+    ...sanitizedParams,
     cookie,
   };
 }

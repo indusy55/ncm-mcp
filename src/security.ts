@@ -90,13 +90,6 @@ export function sanitizeMethodParams(
   _config: SecurityConfig,
   params: Record<string, unknown>,
 ): { ok: true } | { ok: false; message: string } {
-  if (params.cookie !== undefined) {
-    return {
-      ok: false,
-      message: 'cookie passthrough is disabled. Use the server-side login flow instead.',
-    };
-  }
-
   if (
     params.proxy !== undefined ||
     params.realIP !== undefined ||
