@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 type SessionSource = 'env' | 'qr';
 
 export type ServerSessionSnapshot = {
@@ -11,6 +14,81 @@ type ServerSessionState = ServerSessionSnapshot & {
 };
 
 const initialCookie = process.env.NETEASE_COOKIE?.trim();
+const sessionFile = process.env.NCM_SESSION_FILE?.trim()
+  ? path.resolve(process.env.NCM_SESSION_FILE.trim())
+  : undefined;
+
+function readPersistedSession(): ServerSessionState | undefined {
+  if (!sessionFile || !fs.existsSync(sessionFile)) {
+    return undefined;
+  }
+
+  try {
+    const raw = fs.readFileSync(sessionFile, 'utf8');
+    const parsed = JSON.parse(raw) as {
+      cookie?: unknown;
+      source?: unknown;
+      updatedAt?: unknown;
+    };
+    const cookie =
+      typeof parsed.cookie === 'string' ? normalizeCookie(parsed.cookie) : '';
+    const source =
+      parsed.source === 'env' || parsed.source === 'qr' ? parsed.source : 'qr';
+    const updatedAt =
+      typeof parsed.updatedAt === 'string' ? parsed.updatedAt : undefined;
+
+    if (!cookie) {
+      return undefined;
+    }
+
+    return {
+      active: true,
+      cookie,
+      source,
+      updatedAt,
+    };
+  } catch (error) {
+    console.warn('Failed to read persisted NCM session:', error);
+    return undefined;
+  }
+}
+
+function writePersistedSession(state: ServerSessionState): void {
+  if (!sessionFile || !state.cookie) {
+    return;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+    fs.writeFileSync(
+      sessionFile,
+      JSON.stringify(
+        {
+          cookie: state.cookie,
+          source: state.source,
+          updatedAt: state.updatedAt,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+  } catch (error) {
+    console.warn('Failed to persist NCM session:', error);
+  }
+}
+
+function removePersistedSession(): void {
+  if (!sessionFile || !fs.existsSync(sessionFile)) {
+    return;
+  }
+
+  try {
+    fs.unlinkSync(sessionFile);
+  } catch (error) {
+    console.warn('Failed to remove persisted NCM session:', error);
+  }
+}
 
 const state: ServerSessionState = initialCookie
   ? {
@@ -19,7 +97,7 @@ const state: ServerSessionState = initialCookie
       source: 'env',
       updatedAt: new Date().toISOString(),
     }
-  : {
+  : readPersistedSession() ?? {
       active: false,
     };
 
@@ -61,6 +139,10 @@ export function setServerSessionCookie(
   state.cookie = normalizedCookie;
   state.source = source;
   state.updatedAt = new Date().toISOString();
+
+  if (source === 'qr') {
+    writePersistedSession(state);
+  }
 }
 
 export function clearServerSession(): void {
@@ -68,4 +150,5 @@ export function clearServerSession(): void {
   delete state.cookie;
   delete state.source;
   delete state.updatedAt;
+  removePersistedSession();
 }

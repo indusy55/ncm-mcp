@@ -3,9 +3,14 @@ import { z } from 'zod';
 import type { NcmApiContext } from '../ncm-api.js';
 import type { SecurityConfig } from '../security.js';
 import type { ToolRegistrar } from './registrar.js';
-import { callMethod, getBody, toPrettyJson } from './shared.js';
+import { asRecord, callMethod, getBody, toPrettyJson } from './shared.js';
 import { setServerSessionCookie } from '../server-session.js';
 import { idSchema } from './tool-helpers.js';
+
+function getQrData(result: unknown): Record<string, unknown> {
+  const body = getBody(result);
+  return asRecord(body.data) ?? body;
+}
 
 export function registerAuthTools(
   server: ToolRegistrar,
@@ -71,7 +76,7 @@ export function registerAuthTools(
     },
     async ({ qrimg, ...rest }) => {
       const keyResult = await callMethod(context, security, 'login_qr_key', rest);
-      const unikey = getBody(keyResult.structuredContent?.result).unikey;
+      const unikey = getQrData(keyResult.structuredContent?.result).unikey;
 
       if (!unikey) {
         return keyResult;
@@ -87,7 +92,7 @@ export function registerAuthTools(
         return qrResult;
       }
 
-      const qrBody = getBody(qrResult.structuredContent?.result);
+      const qrBody = getQrData(qrResult.structuredContent?.result);
       const data = {
         key: unikey,
         qrurl: qrBody.qrurl,

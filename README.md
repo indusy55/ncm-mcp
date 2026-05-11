@@ -11,6 +11,10 @@ pnpm dev
 
 默认监听 `http://127.0.0.1:3000/mcp`。
 
+如果部署到服务器并需要人工扫码登录，还可以直接访问：
+
+- `http://127.0.0.1:3000/login`
+
 本地验证：
 
 ```bash
@@ -22,39 +26,33 @@ pnpm verify:mcp
 - `HOST`：默认 `127.0.0.1`
 - `PORT`：默认 `3000`
 - `NETEASE_COOKIE`：可选，服务启动时直接注入服务端登录态
-- `NCM_ENABLE_LOGIN_BOOTSTRAP`：是否暴露二维码登录引导 tools，默认 `false`
-- `NCM_ALLOW_AUTH_READS`：是否暴露“需要登录但不写入”的 tools，默认 `false`
+- `NCM_SESSION_FILE`：可选，保存服务端二维码登录态到文件；适合部署场景重启后保留会话
 - `NCM_ALLOW_WRITE_TOOLS`：是否暴露写操作 tools，默认 `false`
-- `NCM_ENABLE_NCM_CALL`：是否启用 `ncm_call`，默认 `false`
-- `NCM_ALLOW_COOKIE_AUTH`：是否允许每次请求透传 `cookie`，默认 `false`
-- `NCM_ALLOW_NETWORK_OVERRIDES`：是否允许 `proxy` / `realIP` / `randomCNIP`，默认 `false`
-- `NCM_ALLOWED_TOOLS`：可选，逗号分隔的 tool 白名单；配置后只注册名单内的 tool
+- `NCM_EXPOSE_LOGIN_PAGE`：是否暴露 `/login` 页面，默认 `false`
 
 ## 安全默认值
 
 默认配置就是面向公共服务的保守模式：
 
 - 默认开放公开只读工具
-- 默认不暴露二维码登录引导 tools
-- 默认不暴露需要登录的只读 tools
+- 默认不暴露网页登录页
+- 默认会在没有服务端登录态时，在服务端终端打印二维码
+- 登录成功后自动开放需要登录的只读工具
 - 默认不暴露写操作 tools
-- 默认不暴露 `ncm_call`
-- 默认不允许透传 `cookie`
-- 默认不允许透传 `proxy`、`realIP`、`randomCNIP`
 
-如果要开放二维码登录引导，但仍然不开放登录后的私有只读能力和写能力，设置：
+如果希望服务端扫码登录后在进程重启后仍然保留登录态，建议同时设置：
 
 ```bash
-NCM_ENABLE_LOGIN_BOOTSTRAP=true
+NCM_SESSION_FILE=./data/ncm-session.json
 ```
 
-如果要开放“需要登录的只读能力”，设置：
+如果你希望部署后通过浏览器扫码，而不是看服务端终端里的二维码，设置：
 
 ```bash
-NCM_ALLOW_AUTH_READS=true
+NCM_EXPOSE_LOGIN_PAGE=true
 ```
 
-如果服务端已经有登录态，`NCM_ALLOW_AUTH_READS=true` 后会自动使用服务端会话，客户端不需要也拿不到 cookie。
+如果服务端已经有登录态，系统会自动使用服务端会话，客户端不需要也拿不到 cookie。
 
 如果要开放写操作，再设置：
 
@@ -64,14 +62,12 @@ NCM_ALLOW_WRITE_TOOLS=true
 
 ## MCP tools 暴露规则
 
-服务启动时会按安全策略决定是否注册 tool：
+服务会按当前会话状态决定是否注册 tool：
 
 - 始终注册公开只读工具
-- `NCM_ENABLE_LOGIN_BOOTSTRAP=true` 且当前没有服务端会话：额外注册二维码登录引导 tools
-- `NCM_ALLOW_AUTH_READS=true` 且当前有服务端会话：额外注册需要登录的只读 tools
+- 当前没有服务端会话：注册二维码登录引导 tools
+- 当前有服务端会话：自动注册需要登录的只读 tools
 - `NCM_ALLOW_WRITE_TOOLS=true` 且当前有服务端会话：额外注册写操作 tools
-- `NCM_ENABLE_NCM_CALL=true`：额外注册 `ncm_call`
-- `NCM_ALLOWED_TOOLS`：如果设置，只保留白名单中的 tool
 
 下面是项目内已经实现的 tools，实际对外暴露以当前策略为准：
 
@@ -125,7 +121,6 @@ NCM_ALLOW_WRITE_TOOLS=true
 - `ncm_comment_video`：获取视频评论
 - `ncm_list_methods`：分页列出可调用方法和对应路由
 - `ncm_describe_method`：查看单个方法信息
-- `ncm_call`：调用一个网易云方法；除 `method` 外的字段会原样透传给目标方法
 
 ## 调用示例
 
@@ -170,7 +165,7 @@ NCM_ALLOW_WRITE_TOOLS=true
 }
 ```
 
-如果要透传 `cookie`、`proxy`、`realIP`、`randomCNIP`，需要先在服务端显式打开对应环境变量；默认会被拒绝。公共服务更适合使用服务端会话，不要让客户端传 cookie。
+不支持客户端透传 `cookie`、`proxy`、`realIP`、`randomCNIP`。公共服务应只使用服务端会话。
 
 ## 返回结构
 
@@ -179,8 +174,6 @@ NCM_ALLOW_WRITE_TOOLS=true
 - `content[0].text`：原始返回的 JSON 文本
 - `structuredContent.result`：原始返回对象
 - `structuredContent.data`：为常用字段整理过的结果，适合客户端直接消费
-
-`ncm_call` 调用到已适配的方法时，也会自动补 `structuredContent.data`。
 
 ## 代码组织
 
@@ -197,12 +190,19 @@ NCM_ALLOW_WRITE_TOOLS=true
 
 公共服务场景下，推荐优先使用二维码登录：
 
-1. 读取 `ncm://login-guide`
-2. 调用 `ncm_login_qr_start`
-3. 轮询 `ncm_login_qr_check`
-4. 登录成功后，cookie 只保存在服务端；登录引导 tools 会自动隐藏
+1. 如果 `NCM_EXPOSE_LOGIN_PAGE=true`，访问 `/login` 页面扫码
+2. 否则直接扫描服务端终端打印的二维码
+3. 登录成功后，cookie 只保存在服务端；登录引导 tools 会自动隐藏
+4. 登录成功后，需要登录的只读 tools 会自动出现
 
-如果服务启动时已经配置了 `NETEASE_COOKIE`，则不需要暴露登录引导 tools。
+如果是部署在远程服务器上，也可以直接打开 `/login` 页面扫码。这个页面会：
+
+1. 调用服务端生成二维码
+2. 在浏览器轮询登录状态
+3. 登录成功后把 cookie 保存到服务端会话
+4. 如果配置了 `NCM_SESSION_FILE`，会把会话持久化到文件
+
+如果服务启动时已经配置了 `NETEASE_COOKIE`，则不需要扫码。
 
 ## 验证说明
 

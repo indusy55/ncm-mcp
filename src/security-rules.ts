@@ -105,7 +105,6 @@ export const TOOL_ACCESS: AccessMap = {
     'ncm_comment_video',
     'ncm_list_methods',
     'ncm_describe_method',
-    'ncm_call',
   ]),
   ...buildAccessMap('login-bootstrap', [
     'ncm_login_qr_check',

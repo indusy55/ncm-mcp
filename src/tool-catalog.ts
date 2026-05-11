@@ -49,5 +49,4 @@ export const FEATURED_TOOLS = [
   'ncm_comment_video',
   'ncm_list_methods',
   'ncm_describe_method',
-  'ncm_call',
 ] as const;

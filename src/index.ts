@@ -3,6 +3,8 @@ import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 import { createNcmMcpServer } from './mcp-server.js';
+import { bootstrapTerminalQrLogin } from './login-bootstrap.js';
+import { registerLoginHttpRoutes } from './login-http.js';
 import { loadNcmApiContext } from './ncm-api.js';
 import { isMethodAllowed, listAllowedTools, loadSecurityConfig } from './security.js';
 import { getServerSessionSnapshot } from './server-session.js';
@@ -17,10 +19,12 @@ async function main(): Promise<void> {
   const app = createMcpExpressApp({ host });
 
   app.use(express.json({ limit: '2mb' }));
+  registerLoginHttpRoutes(app, context);
 
   app.get('/', (_req, res) => {
+    const currentSecurity = loadSecurityConfig();
     const availableMethods = context.methods.filter((method) =>
-      isMethodAllowed(security, method.name),
+      isMethodAllowed(currentSecurity, method.name),
     ).length;
     const serverSession = getServerSessionSnapshot();
 
@@ -28,18 +32,15 @@ async function main(): Promise<void> {
       name: 'ncm-mcp',
       transport: 'streamable-http',
       endpoint: '/mcp',
-      enableLoginBootstrap: security.enableLoginBootstrap,
-      allowAuthenticatedReads: security.allowAuthenticatedReads,
-      allowWriteTools: security.allowWriteTools,
-      allowCookieAuth: security.allowCookieAuth,
-      allowNetworkOverrides: security.allowNetworkOverrides,
-      enableNcmCall: security.enableNcmCall,
+      allowWriteTools: currentSecurity.allowWriteTools,
+      exposeLoginPage: currentSecurity.exposeLoginPage,
       serverSession,
+      loginPage: currentSecurity.exposeLoginPage ? '/login' : null,
       loginGuide: 'ncm://login-guide',
       securityInfo: 'ncm://security',
       availableMethods,
       totalMethods: context.methods.length,
-      featuredTools: listAllowedTools(security, [...FEATURED_TOOLS]),
+      featuredTools: listAllowedTools(currentSecurity, [...FEATURED_TOOLS]),
     });
   });
 
@@ -96,6 +97,10 @@ async function main(): Promise<void> {
     }
 
     console.log(`ncm-mcp listening on http://${host}:${port}/mcp`);
+
+    if (!loadSecurityConfig().exposeLoginPage && !getServerSessionSnapshot().active) {
+      void bootstrapTerminalQrLogin(context);
+    }
   });
 }
 

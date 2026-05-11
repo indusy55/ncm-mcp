@@ -1,21 +1,10 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import {
-  normalizeKnownMethodResult,
-  registerAllTools,
-} from './tools/index.js';
+import { registerAllTools } from './tools/index.js';
 import type { NcmApiContext, NcmMethodMeta } from './ncm-api.js';
-import { normalizeToolError } from './ncm-api.js';
-import {
-  isMethodAllowed,
-  isToolAllowed,
-  loadSecurityConfig,
-  sanitizeMethodParams,
-} from './security.js';
+import { isMethodAllowed, loadSecurityConfig } from './security.js';
 import { getServerSessionSnapshot } from './server-session.js';
-
-type UnknownRecord = Record<string, unknown>;
 
 function toPrettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -36,7 +25,6 @@ function buildMethodResource(
 
 export function createNcmMcpServer(context: NcmApiContext): McpServer {
   const security = loadSecurityConfig();
-  const session = getServerSessionSnapshot();
   const server = new McpServer(
     {
       name: 'ncm-mcp',
@@ -62,6 +50,7 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
       }),
     },
     async ({ keyword, limit, offset }) => {
+      const currentSecurity = loadSecurityConfig();
       const filtered = keyword
         ? context.methods.filter(
             (method) =>
@@ -70,7 +59,7 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
         : context.methods;
 
       const allowed = filtered.filter((method) =>
-        isMethodAllowed(security, method.name),
+        isMethodAllowed(currentSecurity, method.name),
       );
       const items = allowed.slice(offset, offset + limit);
 
@@ -102,9 +91,10 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
       }),
     },
     async ({ method }) => {
+      const currentSecurity = loadSecurityConfig();
       const found = context.methodsByName.get(method);
 
-      if (!found || !isMethodAllowed(security, found.name)) {
+      if (!found || !isMethodAllowed(currentSecurity, found.name)) {
         return {
           isError: true,
           content: [
@@ -135,110 +125,6 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
     },
   );
 
-  if (isToolAllowed(security, 'ncm_call')) {
-    server.registerTool(
-      'ncm_call',
-      {
-        description:
-          'Call one @neteasecloudmusicapienhanced/api method. All fields except method are forwarded as params.',
-        inputSchema: z.object({
-          method: z.string().trim().min(1),
-        }).passthrough(),
-      },
-      async (input) => {
-        const { method, ...params } = input as { method: string } & UnknownRecord;
-        if (!isMethodAllowed(security, method)) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: 'text',
-                text: `Method is disabled by server policy: ${method}`,
-              },
-            ],
-            structuredContent: {
-              method,
-              policyDenied: true,
-            },
-          };
-        }
-
-        const sanitized = sanitizeMethodParams(security, params);
-        if (!sanitized.ok) {
-          const { message } = sanitized;
-
-          return {
-            isError: true,
-            content: [
-              {
-                type: 'text',
-                text: message,
-              },
-            ],
-            structuredContent: {
-              method,
-              policyDenied: true,
-            },
-          };
-        }
-
-        const fn = context.api[method];
-
-        if (!fn) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: 'text',
-                text: `Unknown method: ${method}`,
-              },
-            ],
-            structuredContent: {
-              method,
-              available: false,
-            },
-          };
-        }
-
-        try {
-          const result = await fn(params);
-
-          return {
-            content: [
-              {
-                type: 'text',
-                text: toPrettyJson(result),
-              },
-            ],
-            structuredContent: {
-              method,
-              params,
-              data: normalizeKnownMethodResult(method, result, params),
-              result: result as UnknownRecord,
-            },
-          };
-        } catch (error) {
-          const normalized = normalizeToolError(error);
-
-          return {
-            isError: true,
-            content: [
-              {
-                type: 'text',
-                text: normalized.message,
-              },
-            ],
-            structuredContent: {
-              method,
-              params,
-              error: normalized,
-            },
-          };
-        }
-      },
-    );
-  }
-
   server.registerResource(
     'ncm-methods',
     'ncm://methods',
@@ -252,7 +138,7 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
           mimeType: 'application/json',
           text: toPrettyJson(
             context.methods.filter((method) =>
-              isMethodAllowed(security, method.name),
+              isMethodAllowed(loadSecurityConfig(), method.name),
             ),
           ),
         },
@@ -266,27 +152,24 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
     {
       mimeType: 'application/json',
     },
-    async () => ({
-      contents: [
-        {
-          uri: 'ncm://security',
-          mimeType: 'application/json',
-          text: toPrettyJson({
-            enableLoginBootstrap: security.enableLoginBootstrap,
-            allowAuthenticatedReads: security.allowAuthenticatedReads,
-            allowWriteTools: security.allowWriteTools,
-            allowCookieAuth: security.allowCookieAuth,
-            allowNetworkOverrides: security.allowNetworkOverrides,
-            enableNcmCall: security.enableNcmCall,
-            serverSession: session,
-            allowedTools:
-              security.allowedTools === null
-                ? null
-                : Array.from(security.allowedTools),
-          }),
-        },
-      ],
-    }),
+    async () => {
+      const currentSecurity = loadSecurityConfig();
+      const currentSession = getServerSessionSnapshot();
+
+      return {
+        contents: [
+          {
+            uri: 'ncm://security',
+            mimeType: 'application/json',
+            text: toPrettyJson({
+              allowWriteTools: currentSecurity.allowWriteTools,
+              exposeLoginPage: currentSecurity.exposeLoginPage,
+              serverSession: currentSession,
+            }),
+          },
+        ],
+      };
+    },
   );
 
   server.registerResource(
@@ -295,45 +178,45 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
     {
       mimeType: 'application/markdown',
     },
-    async () => ({
-      contents: [
-        {
-          uri: 'ncm://login-guide',
-          mimeType: 'application/markdown',
-          text: [
-            '# Login Guide',
-            '',
-            `Server session active: ${session.active}`,
-            `Authenticated reads enabled: ${security.allowAuthenticatedReads}`,
-            `Write tools enabled: ${security.allowWriteTools}`,
-            '',
-            ...(security.enableLoginBootstrap && !session.active
-              ? [
-                  'Recommended flow:',
-                  '1. Use `ncm_login_qr_start` to get QR login data.',
-                  '2. Poll with `ncm_login_qr_check` until login succeeds.',
-                  '3. After login succeeds, the session stays on the server and login tools are hidden.',
-                ]
-              : session.active
+    async () => {
+      const currentSecurity = loadSecurityConfig();
+      const currentSession = getServerSessionSnapshot();
+
+      return {
+        contents: [
+          {
+            uri: 'ncm://login-guide',
+            mimeType: 'application/markdown',
+            text: [
+              '# Login Guide',
+              '',
+              `Server session active: ${currentSession.active}`,
+              `Authenticated reads enabled: ${currentSession.active}`,
+              `Write tools enabled: ${currentSecurity.allowWriteTools}`,
+              `Login page exposed: ${currentSecurity.exposeLoginPage}`,
+              '',
+              ...(!currentSession.active
                 ? [
-                    'A server-side session is already active.',
-                    'Clients cannot read or pass the login cookie.',
+                    'Recommended flow:',
+                    currentSecurity.exposeLoginPage
+                      ? '1. Open `/login` and scan the QR code in the browser.'
+                      : '1. Watch the server terminal and scan the printed QR code.',
+                    '2. Confirm login in the mobile app.',
+                    '3. After login succeeds, the session stays on the server and login tools are hidden.',
                   ]
-              : [
-                  'Login bootstrap tools are not exposed in the current mode.',
-                  'Set `NCM_ENABLE_LOGIN_BOOTSTRAP=true` to enable QR login bootstrap.',
-                ]),
-            '',
-            security.allowCookieAuth
-              ? 'Per-request cookie passthrough is enabled.'
-              : 'Per-request cookie passthrough is disabled by default.',
-            security.allowNetworkOverrides
-              ? 'Network override params are enabled.'
-              : 'Network override params such as proxy and realIP are disabled by default.',
-          ].join('\n'),
-        },
-      ],
-    }),
+                : currentSession.active
+                  ? [
+                      'A server-side session is already active.',
+                      'Clients cannot read or pass the login cookie.',
+                    ]
+                  : [
+                      'No login bootstrap is available.',
+                    ]),
+            ].join('\n'),
+          },
+        ],
+      };
+    },
   );
 
   server.registerResource(
@@ -345,8 +228,9 @@ export function createNcmMcpServer(context: NcmApiContext): McpServer {
     async (_uri, variables) => {
       const name = variables.name;
       const method = typeof name === 'string' ? context.methodsByName.get(name) : undefined;
+      const currentSecurity = loadSecurityConfig();
 
-      if (!method || !isMethodAllowed(security, method.name)) {
+      if (!method || !isMethodAllowed(currentSecurity, method.name)) {
         throw new Error(`Unknown or disabled method: ${String(name)}`);
       }
 
